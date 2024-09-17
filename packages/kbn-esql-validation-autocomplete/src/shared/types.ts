@@ -29,6 +29,7 @@ export interface ESQLCallbacks {
     { name: string; sourceIndices: string[]; matchField: string; enrichFields: string[] }
   >;
   getPreferences?: () => Promise<{ histogramBarTarget: number }>;
+  getFieldValuesFor?: CallbackFn<{ query: string; field: string }, ESQLRealField>;
 }
 
 export type ReasonTypes = 'missingCommand' | 'unsupportedFunction' | 'unknownFunction';

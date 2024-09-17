@@ -142,7 +142,7 @@ export const buildFieldsDefinitionsWithMetadata = (
   return fields.map((field) => {
     const description = field.metadata?.description;
 
-    const titleCaseType = field.type.charAt(0).toUpperCase() + field.type.slice(1);
+    const titleCaseType = field.type?.charAt(0).toUpperCase() + field.type?.slice(1);
     return {
       label: field.name,
       text:

@@ -10,6 +10,8 @@
 import { uniq, uniqBy } from 'lodash';
 import type {
   AstProviderFn,
+  ESQLAst,
+  ESQLAstCommand,
   ESQLAstItem,
   ESQLCommand,
   ESQLCommandOption,
@@ -111,6 +113,7 @@ import {
 } from '../definitions/types';
 import { metadataOption } from '../definitions/options';
 import { comparisonFunctions } from '../definitions/builtin';
+import { buildQueryForFieldsFromSource } from '../validation/helpers';
 
 type GetFieldsByTypeFn = (
   type: string | string[],
@@ -179,6 +182,13 @@ export async function suggest(
   );
   const getSources = getSourcesHelper(resourceRetriever);
   const { getPolicies, getPolicyMetadata } = getPolicyRetriever(resourceRetriever);
+  const getFieldValues = getFieldValuesRetriever(
+    correctedQuery,
+    ast,
+    astContext.command,
+    astContext.node,
+    resourceRetriever
+  );
 
   if (astContext.type === 'newCommand') {
     // propose main commands here
@@ -252,6 +262,9 @@ export async function suggest(
       getPolicyMetadata
     );
   }
+  if (astContext.type === 'value') {
+    return getFieldValuesSuggestions(innerText, ast, astContext, getFieldValues);
+  }
   return [];
 }
 
@@ -282,6 +295,41 @@ function getPolicyRetriever(resourceRetriever?: ESQLCallbacks) {
     },
     getPolicyMetadata: helpers.getPolicyMetadata,
   };
+}
+
+function getFieldValuesRetriever(
+  query: string,
+  ast: ESQLAst,
+  command?: ESQLAstCommand,
+  node?: ESQLSingleAstItem,
+  resourceRetriever?: ESQLCallbacks
+) {
+  const sourceQuery = buildQueryForFieldsFromSource(query, ast);
+  const fieldName = getFieldName(command?.args[0]);
+  const fetchNodeQuery = sourceQuery + ` | KEEP ${fieldName}`;
+
+  return async () => {
+    return command?.incomplete
+      ? []
+      : (await resourceRetriever?.getFieldValuesFor?.({
+          query: fetchNodeQuery,
+          field: fieldName,
+        })) || [];
+  };
+}
+
+function getFieldName(commandArg: ESQLAstItem | undefined) {
+  if (!commandArg || Array.isArray(commandArg)) {
+    return EDITOR_MARKER;
+  }
+  if (['!=', '==', '>', '>=', '<', '<='].includes(commandArg.name)) {
+    if ('args' in commandArg && !Array.isArray(commandArg.args[0])) {
+      return commandArg.args[0].name;
+    }
+  } else if ('args' in commandArg && !Array.isArray(commandArg.args[0])) {
+    return getFieldName(commandArg.args[commandArg.args.length - 1]);
+  }
+  return EDITOR_MARKER;
 }
 
 function getSourceSuggestions(sources: ESQLSourceResult[]) {
@@ -478,12 +526,6 @@ async function getExpressionSuggestionsByType(
 ) {
   const commandDef = getCommandDefinition(command.name);
   const { argIndex, prevIndex, lastArg, nodeArg } = extractArgMeta(command, node);
-
-  // TODO - this is a workaround because it was too difficult to handle this case in a generic way :(
-  if (commandDef.name === 'from' && node && isSourceItem(node) && /\s/.test(node.name)) {
-    // FROM " <suggest>"
-    return [];
-  }
 
   // A new expression is considered either
   // * just after a command name => i.e. ... | STATS <here>
@@ -1832,4 +1874,25 @@ async function getOptionArgsSuggestions(
     }
   }
   return suggestions;
+}
+
+async function getFieldValuesSuggestions(
+  innerText: string,
+  commands: ESQLCommand[],
+  {
+    command,
+    node,
+  }: {
+    command: ESQLCommand;
+    node: ESQLSingleAstItem | undefined;
+  },
+  getFieldValues: () => Promise<ESQLRealField[]>
+) {
+  const suggestions = [];
+
+  const fieldValues = buildFieldsDefinitionsWithMetadata(await getFieldValues());
+
+  suggestions.push(...Array.from(new Set(fieldValues)));
+
+  return suggestions as SuggestionRawDefinition[];
 }

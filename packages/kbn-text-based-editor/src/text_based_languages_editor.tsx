@@ -324,6 +324,19 @@ export const TextBasedLanguagesEditor = memo(function TextBasedLanguagesEditor({
     return { cache: fn.cache, memoizedSources: fn };
   }, []);
 
+  const { cache: esqlFieldValuesCache, memoizedFieldValues } = useMemo(() => {
+    const fn = memoize(
+      (...args: [{ esql: string }, ExpressionsStart, undefined, AbortController?]) => ({
+        timestamp: Date.now(),
+        // can use more generic name for this function
+        result: fetchFieldsFromESQL(...args),
+      }),
+      ({ esql }) => esql
+    );
+
+    return { cache: fn.cache, memoizedFieldValues: fn };
+  }, []);
+
   const esqlCallbacks: ESQLCallbacks = useMemo(() => {
     const callbacks: ESQLCallbacks = {
       getSources: async () => {
@@ -373,6 +386,36 @@ export const TextBasedLanguagesEditor = memo(function TextBasedLanguagesEditor({
           histogramBarTarget,
         };
       },
+      getFieldValuesFor: async ({
+        query: queryToExecute,
+        field: fieldName,
+      }: { query?: string; field?: string } | undefined = {}) => {
+        if (queryToExecute) {
+          // Check if there's a stale entry and clear it
+          clearCacheWhenOld(esqlFieldValuesCache, queryToExecute);
+          try {
+            const table = await memoizedFieldValues(
+              { esql: `${queryToExecute} | LIMIT 100` },
+              expressions,
+              undefined,
+              abortController
+            ).result;
+            const values: ESQLRealField[] =
+              table?.rows
+                .map((c) => {
+                  return {
+                    name: fieldName ? c[fieldName] : c[Object.keys(c)[0]],
+                    type: 'text' as FieldType,
+                  };
+                })
+                .filter((v) => v.name) || [];
+            return await getRateLimitedColumnsWithMetadata(values, fieldsMetadata);
+          } catch (e) {
+            // no action yet
+          }
+        }
+        return [];
+      },
     };
     return callbacks;
   }, [
@@ -388,6 +431,8 @@ export const TextBasedLanguagesEditor = memo(function TextBasedLanguagesEditor({
     indexManagementApiService,
     fieldsMetadata,
     histogramBarTarget,
+    esqlFieldValuesCache,
+    memoizedFieldValues,
   ]);
 
   const queryRunButtonProperties = useMemo(() => {
